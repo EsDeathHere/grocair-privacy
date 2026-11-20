@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Grocair — aplikasi kasir warung yang bekerja offline: catat penjualan, kelola stok, hitung margin, lihat laporan." />
+  <title>Grocair — Kasir warung</title>
+
+  <!-- Keamanan: hanya boleh memuat skrip/gaya/font dari file aplikasi ini sendiri.
+       Tidak ada koneksi jaringan, tidak ada frame, tidak ada plugin. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'" />
+  <meta name="referrer" content="no-referrer" />
+  <meta name="theme-color" content="#0f766e" />
+  <link rel="manifest" href="manifest.webmanifest" />
+
+  <link rel="stylesheet" href="fonts.css" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="print.css" media="print" />
+  <!-- Ukuran kertas struk disuntik saat cetak: @page{size:58mm <tinggi>mm;margin:0}.
+       Deklarasi `size: 58mm auto` tidak valid dan dibuang browser tanpa pesan. -->
+  <style id="pageSize"></style>
+
+</head>
+<body>
+  <div class="app">
+
+    <header class="topbar">
+      <a class="brand" href="#" data-go="kasir" aria-label="Grocair, ke kasir">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5 3h14v18l-3.5-2-3.5 2-3.5-2L5 21z" />
+            <path d="M8.5 8h7M8.5 12h7M8.5 16h4" />
+          </svg>
+        </span>
+        <span class="brand-word">GROC<span>AIR</span></span>
+      </a>
+
+      <p class="shop-name" id="tokoNama" title="Nama warung"></p>
+
+      <details class="nav-menu" id="navMenu">
+        <summary class="nav-trigger">
+          <span>Menu</span>
+          <span class="nav-current" id="navMenuLabel">Kasir</span>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+        </summary>
+        <div class="nav-panel" role="group" aria-label="Navigasi utama">
+          <button class="nav-btn" data-go="kasir" aria-current="page">Kasir</button>
+          <button class="nav-btn" data-go="barang">Barang</button>
+          <button class="nav-btn" data-go="kalkulator">Kalkulator</button>
+          <button class="nav-btn" data-go="laporan">Laporan</button>
+          <button class="nav-btn" data-go="pengaturan">Pengaturan</button>
+        </div>
+      </details>
+
+      <div class="today" title="Total penjualan hari ini">
+        <span>Kasir hari ini</span>
+        <strong id="todayTotal">Rp 0</strong>
+      </div>
+    </header>
+
+    <!-- Jam perangkat mundur > 6 jam dari catatan terakhir: lisensi tidak
+         bisa dipercaya, tapi data tetap bisa dipakai. -->
+    <div class="clock-banner" id="clockWarn" role="alert" hidden>
+      Jam perangkat mundur lebih dari 6 jam dari catatan terakhir. Periksa tanggal &amp; waktu perangkat — lisensi mungkin tidak dikenali.
+    </div>
+
+    <!-- Pengingat cadangan: data hanya ada di perangkat ini. -->
+    <div class="backup-banner" id="backupReminder" role="status" hidden>
+      <span data-reminder-text></span>
+      <button class="btn btn-ghost btn-sm" id="btnBackupReminder" type="button">Unduh backup</button>
+    </div>
+
+    <!-- Banner uji coba: muncul setelah hari ke-7 trial. -->
+    <div class="trial-banner" id="trialBanner" role="status" hidden>
+      <span id="trialBannerText"></span>
+      <button class="btn btn-ghost btn-sm" id="btnTrialLihatPaket" type="button">Lihat paket</button>
+    </div>
+
+    <main>
+
+      <!-- =============================== KASIR =============================== -->
+      <section class="view" data-panel="kasir">
+        <div class="kasir-layout">
+
+          <div class="catalog">
+            <div class="view-head">
+              <h1>Kasir</h1>
+              <p>Pilih barang yang dibeli, lalu bayar. Stok dan laporan terisi otomatis.</p>
+            </div>
+
+            <div class="catalog-tools">
+              <div class="tools-row">
+                <label class="search">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                    <circle cx="11" cy="11" r="7"></circle>
+                    <line x1="21" y1="21" x2="16.5" y2="16.5"></line>
+                  </svg>
+                  <input id="kasirSearch" type="search" placeholder="Cari barang atau scan barcode…" autocomplete="off" />
+                </label>
+                <button class="btn btn-primary" id="btnScanKasir" type="button">Scan barcode</button>
+                <button class="btn btn-ghost" id="btnManual" type="button">Harga manual</button>
+              </div>
+              <div class="chips" id="categoryChips" role="group" aria-label="Filter kategori"></div>
+            </div>
+
+            <div class="product-grid" id="productGrid"></div>
+          </div>
+
+          <aside class="receipt" id="receiptPanel" aria-label="Struk belanja">
+            <div class="receipt-inner">
+              <button class="receipt-close" id="receiptClose" type="button" aria-label="Tutup struk">×</button>
+              <div class="receipt-head">
+                <p class="receipt-shop" id="receiptShop">GROCAIR</p>
+                <p class="receipt-sub" id="receiptAlamat">KASIR</p>
+                <p class="receipt-sub" id="receiptDate">—</p>
+              </div>
+
+              <div class="receipt-items" id="receiptItems">
+                <p class="receipt-empty">Belum ada barang.<br />Klik barang di sebelah kiri.</p>
+              </div>
+
+              <div class="receipt-totals" id="receiptTotals" hidden>
+                <div class="receipt-row"><span>ITEM</span><span id="rtCount">0</span></div>
+                <div class="receipt-row"><span>SUBTOTAL</span><span id="rtSubtotal">Rp 0</span></div>
+                <div class="receipt-row" id="rowDiskon" hidden><span>DISKON</span><span id="rtDiskon">−Rp 0</span></div>
+                <div class="receipt-row" id="rowBulat" hidden><span>PEMBULATAN</span><span id="rtBulat">Rp 0</span></div>
+                <div class="receipt-row receipt-grand"><span>TOTAL</span><span id="rtTotal">Rp 0</span></div>
+              </div>
+
+              <div class="receipt-actions">
+                <button class="btn btn-pay" id="btnPay" disabled>Bayar</button>
+                <button class="btn btn-ghost btn-clear" id="btnClear" disabled>Kosongkan</button>
+              </div>
+
+              <div class="receipt-zig" aria-hidden="true"></div>
+            </div>
+          </aside>
+
+        </div>
+      </section>
+
+      <!-- =============================== BARANG =============================== -->
+      <section class="view" data-panel="barang" hidden>
+        <div class="view-head split">
+          <div>
+            <h1>Barang</h1>
+            <p>Kelola produk, stok, dan harga. Margin dihitung dari harga modal.</p>
+          </div>
+          <button class="btn btn-primary" id="btnAddProduct">Tambah barang</button>
+        </div>
+
+        <div class="table-tools">
+          <label class="search search-wide">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="7"></circle>
+              <line x1="21" y1="21" x2="16.5" y2="16.5"></line>
+            </svg>
+            <input id="barangSearch" type="search" placeholder="Cari nama atau barcode…" autocomplete="off" />
+          </label>
+          <p class="muted" id="barangCount">—</p>
+        </div>
+
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Barang</th>
+                <th>Kategori</th>
+                <th class="num">Modal</th>
+                <th class="num">Jual</th>
+                <th class="num">Margin</th>
+                <th class="num">Stok</th>
+                <th class="aksi-col" id="thAksi">Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="barangBody"></tbody>
+          </table>
+          <p class="empty-table" id="barangEmpty" hidden>Tidak ada barang yang cocok.</p>
+        </div>
+      </section>
+
+      <!-- =============================== KALKULATOR =============================== -->
+      <section class="view" data-panel="kalkulator" hidden>
+        <div class="view-head">
+          <h1>Kalkulator margin</h1>
+          <p>Hitung modal per unit dan harga jual dari barang grosir. Cocok untuk warung yang beli karungan.</p>
+        </div>
+
+        <div class="kalk-layout">
+          <form class="kalk-form" id="kalkForm" autocomplete="off">
+            <label class="field">
+              <span>Nama barang</span>
+              <input type="text" id="k-nama" placeholder="Contoh: Beras Setra 50 kg" />
+            </label>
+            <div class="field-row">
+              <label class="field">
+                <span>Harga beli grosir (Rp)</span>
+                <input type="number" id="k-grosir" min="0" step="any" placeholder="650000" />
+              </label>
+              <label class="field">
+                <span>Total isi eceran</span>
+                <input type="number" id="k-isi" min="0" step="any" placeholder="50" />
+              </label>
+            </div>
+            <div class="field-row">
+              <label class="field">
+                <span>Biaya ops per unit (Rp)</span>
+                <input type="number" id="k-ops" min="0" step="any" placeholder="0" value="0" />
+              </label>
+              <label class="field">
+                <span>Target margin (%)</span>
+                <input type="number" id="k-margin" min="0" step="any" placeholder="20" value="20" />
+              </label>
+            </div>
+            <div class="kalk-actions">
+              <button type="submit" class="btn btn-primary">Hitung</button>
+              <button type="reset" class="btn btn-ghost" id="k-reset">Ulangi</button>
+            </div>
+          </form>
+
+          <div class="kalk-result" id="kalkResult" aria-live="polite">
+            <p class="kalk-empty">Isi form, lalu tekan Hitung. Rincian modal dan harga jual muncul di sini.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- =============================== LAPORAN =============================== -->
+      <section class="view" data-panel="laporan" hidden>
+        <div class="view-head">
+          <h1>Laporan</h1>
+          <p>Pilih rentang tanggal, lalu ekspor ke Excel bila perlu. Transaksi yang dibatalkan tidak dihitung.</p>
+        </div>
+
+        <div class="lap-filter" role="group" aria-label="Rentang laporan">
+          <div class="lap-chips">
+            <button class="chip" type="button" data-rentang="hari" aria-pressed="true">Hari ini</button>
+            <button class="chip" type="button" data-rentang="minggu" aria-pressed="false">7 hari</button>
+            <button class="chip" type="button" data-rentang="bulan" aria-pressed="false">Bulan ini</button>
+          </div>
+          <label class="lap-date">
+            <span>Dari</span>
+            <input type="date" id="lapDari" aria-label="Dari tanggal" />
+          </label>
+          <label class="lap-date">
+            <span>Sampai</span>
+            <input type="date" id="lapSampai" aria-label="Sampai tanggal" />
+          </label>
+          <button class="btn btn-ghost btn-sm" type="button" id="btnCsv">Ekspor CSV</button>
+        </div>
+        <p class="lap-ket" id="lapKet"></p>
+
+        <div class="stats" id="statsGrid"></div>
+        <p class="stock-note" id="stockNote" hidden></p>
+
+        <div class="laporan-grid">
+          <div class="panel">
+            <h2>Produk terlaris</h2>
+            <ol class="ranking" id="rankingList"></ol>
+          </div>
+          <div class="panel">
+            <h2>Transaksi terakhir</h2>
+            <div class="tx-list" id="txList"></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Penjualan 7 hari</h2>
+          </div>
+          <div class="bars" id="salesBars"></div>
+        </div>
+      </section>
+
+      <!-- =============================== PENGATURAN =============================== -->
+      <section class="view" data-panel="pengaturan" hidden>
+        <div class="view-head">
+          <h1>Pengaturan</h1>
+          <p>Nama warung, akses pemilik, dan PIN. Data tetap di perangkat ini.</p>
+        </div>
+
+        <div class="settings-grid">
+          <div class="panel">
+            <h2>Warung</h2>
+            <dl class="kv" id="setToko"></dl>
+          </div>
+          <div class="panel">
+            <h2>Akses</h2>
+            <div id="setAkses"></div>
+            <button type="button" class="btn btn-ghost" id="btnPaketDirect" hidden>Aktivasi / perpanjang paket</button>
+          </div>
+          <div class="panel" id="setData">
+            <h2>Data &amp; cadangan</h2>
+            <p class="modal-hint" id="dataStatus"></p>
+            <div class="data-actions">
+              <button class="btn btn-primary" id="btnBackup" type="button">Unduh backup</button>
+              <button class="btn btn-ghost" id="btnPulihkan" type="button">Pulihkan dari file</button>
+              <input type="file" id="filePulihkan" accept=".json,application/json" hidden />
+            </div>
+            <p class="modal-hint" id="dataKunci" hidden>Hanya pemilik yang bisa mengunduh backup atau memulihkan data.</p>
+            <div class="data-danger">
+              <button class="btn btn-danger btn-sm" id="btnReset" type="button">Hapus semua data</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Bar bawah: satu-satunya jalan ke pembayaran di layar kecil,
+         dan tetap ada di desktop supaya alurnya sama. -->
+    <div class="cart-bar" id="cartBar" hidden>
+      <button class="cart-bar-info" id="cartBarOpen" type="button" aria-label="Lihat isi struk">
+        <span class="cb-count" id="cartBarCount">0 barang</span>
+        <span class="cb-total" id="cartBarTotal">Rp 0</span>
+      </button>
+      <button class="btn btn-ghost cb-diskon" id="btnDiskon" type="button">Diskon</button>
+      <button class="btn btn-pay cb-pay" id="cartBarPay" type="button">Bayar</button>
+    </div>
+
+    <footer class="footer">
+      <p>Grocair · bekerja offline. Data tersimpan di perangkat ini (IndexedDB) dan tidak dikirim ke mana-mana.</p>
+    </footer>
+  </div>
+
+  <div class="overlay" id="onboarding" role="dialog" aria-modal="true" aria-labelledby="onbJudul" hidden>
+    <div class="onb-card">
+      <div class="onb-top">
+        <p class="onb-brand">grocair</p>
+        <p class="onb-step" id="onbLangkah">1/4</p>
+      </div>
+      <h2 class="onb-judul" id="onbJudul">Siapkan warung</h2>
+      <form class="onb-form" id="onbForm" autocomplete="off" novalidate></form>
+    </div>
+  </div>
+
+  <div class="overlay lock" id="lock" role="dialog" aria-modal="true" aria-labelledby="lockJudul" hidden>
+    <div class="lock-card">
+      <p class="onb-brand">grocair</p>
+      <h2 class="lock-judul" id="lockJudul">Masukkan PIN</h2>
+      <p class="lock-sub" id="lockSub"></p>
+      <div class="lock-dots" id="lockDots" aria-hidden="true">
+        <span></span><span></span><span></span><span></span><span></span><span></span>
+      </div>
+      <p class="lock-msg" id="lockMsg" role="status" aria-live="polite"></p>
+      <div class="lock-pad" id="lockPad" role="group" aria-label="Keypad PIN"></div>
+      <button class="link-btn" id="btnLupaPin" type="button">Lupa PIN</button>
+    </div>
+  </div>
+
+  <div class="modal-root" id="modalRoot" hidden></div>
+  <dialog id="scannerDialog" aria-labelledby="scannerTitle">
+    <div class="modal-head">
+      <h2 id="scannerTitle">Scan barcode</h2>
+      <button type="button" class="btn btn-ghost" id="scannerClose" aria-label="Tutup kamera">Tutup</button>
+    </div>
+    <video id="scannerVideo" autoplay muted playsinline aria-label="Pratinjau kamera barcode"></video>
+    <p id="scannerStatus" role="status" aria-live="polite"></p>
+    <button type="button" class="btn btn-ghost" id="scannerManual">Ketik angka manual</button>
+  </dialog>
+
+  <!-- Layar kunci fitur lanjutan (trial habis → paket langganan). -->
+  <div class="layar-terkunci" id="layarLangganan" hidden
+       data-locked="laporan" role="dialog" aria-modal="true"
+       aria-labelledby="lockJudul">
+    <div class="layar-terkunci-kartu">
+      <p class="eyebrow" id="lockEyebrow">Fitur lanjutan</p>
+      <h2 id="lockJudul">Coba gratis 30 hari</h2>
+      <p class="lock-desc" id="lockDesc"></p>
+      <div class="paket-list">
+        <button type="button" class="paket" data-paket="bulanan">
+          <span class="paket-nama">Bulanan</span>
+          <strong class="paket-harga">Rp 25.000<span>/bln</span></strong>
+          <span class="paket-sku">grocair_bulanan</span>
+        </button>
+        <button type="button" class="paket" data-paket="tahunan">
+          <span class="paket-nama">Tahunan</span>
+          <strong class="paket-harga">Rp 199.000<span>/thn</span></strong>
+          <span class="paket-sku">grocair_tahunan</span>
+        </button>
+      </div>
+      <section id="directWaActions" hidden aria-label="Aktivasi manual">
+        <p>Bayar QRIS/transfer melalui WhatsApp penjual. Tidak diperpanjang otomatis.</p>
+        <label for="directInstallId">Kode instalasi (satu instalasi)</label>
+        <input id="directInstallId" readonly />
+        <button type="button" class="btn btn-ghost" id="btnCopyInstallId">Salin kode instalasi</button>
+        <p>Jika WhatsApp tidak terbuka, kirim pesan berikut ke +6288294034375:</p>
+        <textarea id="directPesan" readonly aria-label="Pesan pembelian" rows="4"></textarea>
+        <label for="inputKodeLisensi">Kode aktivasi dari penjual</label>
+        <textarea id="inputKodeLisensi" maxlength="8192" rows="3" spellcheck="false"></textarea>
+        <button type="button" class="btn" id="btnAktifkanKode">Aktifkan kode (pemilik)</button>
+        <p id="directStatus" role="status"></p>
+      </section>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="btnPulihkanPaket">Pulihkan pembelian</button>
+        <button type="button" class="btn btn-ghost" id="btnTutupPaket">Nanti saja</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <!-- Struk untuk dicetak. Sengaja DI LUAR .app: modal position:fixed akan
+       terpotong di halaman cetak. Di layar node ini digeser keluar viewport
+       supaya bisa diukur tingginya, dan print.css menampilkannya saat cetak. -->
+  <div id="printArea" aria-hidden="true"></div>
+
+  <!-- Kunci publik lisensi ada di license.js (default), tidak inline:
+       CSP script-src 'self' memblokir script inline. Private key ada di
+       penjual (env GROCAIR_PRIVATE_KEY), tidak pernah dikirim ke klien. -->
+  <script defer src="sanitize.js"></script>
+  <script defer src="store.js"></script>
+  <script defer src="auth.js"></script>
+  <script defer src="backup.js"></script>
+  <script defer src="receipt.js"></script>
+  <script defer src="license.js"></script>
+  <script defer src="flavor.js"></script>
+  <script defer src="entitlement.js"></script>
+  <script defer src="billing-mock.js"></script>
+  <script defer src="vendor/zxing.min.js"></script>
+  <script defer src="scanner.js"></script>
+  <script defer src="demo.js"></script>
+</body>
+</html>
